@@ -134,6 +134,19 @@
   </div>
 </div>
 
+<div id="cell-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;align-items:flex-start;justify-content:center;padding-top:60px;overflow-y:auto" onclick="if(event.target===this)closeCellModal()">
+  <div style="background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);width:90%;max-width:540px;max-height:80vh;overflow-y:auto;padding:1.25rem">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+      <div>
+        <div style="font-size:15px;font-weight:500" id="modal-cell-name"></div>
+        <div style="font-size:12px;color:var(--color-text-secondary);margin-top:2px" id="modal-cell-count"></div>
+      </div>
+      <button onclick="closeCellModal()" style="background:none;border:none;cursor:pointer;font-size:20px;color:var(--color-text-secondary);line-height:1;padding:4px">✕</button>
+    </div>
+    <div id="modal-events"></div>
+  </div>
+</div>
+
 <div class="setup-overlay" id="setup-overlay" onclick="if(event.target===this)this.classList.remove('show')">
   <div class="setup-modal">
     <h2>הגדרות חיבור</h2>
@@ -289,7 +302,8 @@ function render(){
 
   document.getElementById('cell-status').innerHTML=CELLS.map(c=>{
     const n=allEvents.filter(e=>e.cell===c).length;
-    return`<div class="cell-row"><span>${c}</span>
+    return`<div class="cell-row">
+      <span style="cursor:pointer;color:var(--color-text-info);text-decoration:underline;text-decoration-style:dotted" onclick="openCellModal('${c}')">${c}</span>
       ${n?`<span class="badge ok">${n} פעילות${n===1?'':'ות'}</span>`:
            `<span class="badge no">לא דיווח</span>`}
     </div>`;
@@ -339,7 +353,7 @@ function renderGantt(events){
       const evs=events.filter(e=>e.cell===c&&e.day===d);
       if(!evs.length){h+='<td></td>';}
       else{
-        const dots=evs.map(e=>`<span class="dot" title="${e.title}${e.time?' | '+e.time:''}" style="background:${col}"></span>`).join('');
+        const dots=evs.map(e=>`<span class="dot" title="${e.title}${e.date?' | '+e.date:''}${e.time?' | '+e.time:''}${e.location?' | '+e.location:''}${e.needs?' | צרכים: '+e.needs:''}" style="background:${col}"></span>`).join('');
         const label=evs[0].title.length>8?evs[0].title.slice(0,8)+'…':evs[0].title;
         h+=`<td>${dots}<br><span style="font-size:10px;color:${col}">${label}${evs.length>1?' +'+( evs.length-1):''}</span>`;
         h+=`</td>`;
@@ -396,6 +410,68 @@ function testConn(){
 }
 
 document.getElementById('webapp-url').value='https://script.google.com/macros/s/AKfycbwX7F5eAkq3RW0LlHFW_vpiuSmwcEIoehcx07KSKAkHgRgg03ywFQQDspzaXo0k39pZ/exec';
+
+function closeCellModal(){
+  document.getElementById('cell-modal').style.display='none';
+}
+
+async function openCellModal(cellName){
+  const modal=document.getElementById('cell-modal');
+  const ci=CELLS.indexOf(cellName);
+  const col=ci>=0?COLORS[ci]:'#888';
+  document.getElementById('modal-cell-name').textContent=cellName;
+  document.getElementById('modal-cell-name').style.color=col;
+  document.getElementById('modal-events').innerHTML='<div style="text-align:center;padding:1rem;font-size:13px;color:var(--color-text-secondary)">טוען...</div>';
+  modal.style.display='flex';
+
+  let events=[];
+  try{
+    const r=await fetch('https://script.google.com/macros/s/AKfycbwX7F5eAkq3RW0LlHFW_vpiuSmwcEIoehcx07KSKAkHgRgg03ywFQQDspzaXo0k39pZ/exec');
+    events=await r.json();
+  }catch(e){
+    events=JSON.parse(localStorage.getItem('taim_events')||'[]');
+  }
+
+  const cellEvents=events.filter(e=>e.cell===cellName);
+  const today=new Date(); today.setHours(0,0,0,0);
+
+  const sorted=cellEvents.sort((a,b)=>{
+    const da=a.date?new Date(a.date):new Date(0);
+    const db=b.date?new Date(b.date):new Date(0);
+    return da-db;
+  });
+
+  document.getElementById('modal-cell-count').textContent=sorted.length+' פעילויות בסך הכל';
+
+  if(!sorted.length){
+    document.getElementById('modal-events').innerHTML='<div style="text-align:center;padding:2rem;font-size:13px;color:var(--color-text-secondary)">אין פעילויות רשומות</div>';
+    return;
+  }
+
+  let html='';
+  let lastSection='';
+  sorted.forEach(function(e){
+    const d=e.date?new Date(e.date):null;
+    const isPast=d&&d<today;
+    const isFuture=d&&d>=today;
+    const section=isFuture?'עתידי':isPast?'היסטוריה':'ללא תאריך';
+    if(section!==lastSection){
+      html+=`<div style="font-size:11px;font-weight:500;color:var(--color-text-secondary);margin:${lastSection?'16px':'0'} 0 6px;text-transform:uppercase;letter-spacing:0.05em">${section}</div>`;
+      lastSection=section;
+    }
+    html+=`<div style="padding:10px;border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);margin-bottom:6px;background:var(--color-background-primary)${isPast?';opacity:0.65':''}">
+      <div style="font-size:13px;font-weight:500;color:var(--color-text-primary)">${e.title}</div>
+      <div style="font-size:11px;color:var(--color-text-secondary);margin-top:3px">
+        ${e.day||''}${e.date?' · '+e.date:''}${e.time?' · '+e.time:''}${e.location?' · '+e.location:''}
+      </div>
+      ${e.desc?`<div style="font-size:12px;color:var(--color-text-secondary);margin-top:4px">${e.desc}</div>`:''}
+      ${e.needs?`<div style="font-size:11px;background:var(--color-background-secondary);border-radius:6px;padding:5px 8px;margin-top:6px;color:var(--color-text-secondary)"><span style="font-weight:500;color:var(--color-text-primary)">צרכים:</span> ${e.needs}</div>`:''}
+      <div style="font-size:10px;color:var(--color-text-tertiary);margin-top:4px">דווח: ${e.reported||''} · ${e.sheet||''}</div>
+    </div>`;
+  });
+
+  document.getElementById('modal-events').innerHTML=html;
+}
 
 function getLockState(){
   return localStorage.getItem('taim_locked')==='true';
